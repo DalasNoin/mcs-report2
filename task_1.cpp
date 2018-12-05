@@ -34,7 +34,8 @@
 #include <systemc.h>
 #include <iostream>
 //#include <thread>         // std::thread
-//#include <mutex>          // std::mutex
+#include <mutex>          // std::mutex
+#include <bitset>
 
 #include <ctime>
 
@@ -144,9 +145,9 @@ private:
 class Bus_if : public virtual sc_interface
 {
 public:
-    virtual bool read(int addr,int cache_id) = 0;
-    virtual bool write(int addr, int data, int cache_id) = 0;
-    virtual bool read_x(int addr, int cache_id) = 0;
+    virtual bool read(uint32_t addr,int cache_id) = 0;
+    virtual bool write(uint32_t addr, int data, int cache_id) = 0;
+    virtual bool read_x(uint32_t addr, int cache_id) = 0;
 };
 
 
@@ -168,8 +169,7 @@ public:
     sc_out<Function>        Port_BusFunction;
     sc_out<int>             Port_BusLocked;
     
-    //std::mutex            mutex; 
-    //Mutex could not be used, did not compile
+    sc_mutex            mutex; 
 public:
     SC_CTOR(Bus)
     {
@@ -180,54 +180,52 @@ public:
     // Handle Port_CLK to simulate delay
     // Initialize some bus properties
     }
-    virtual bool read(int addr, int cache_id)
+    virtual bool read(uint32_t addr, int cache_id)
     {
         // Bus might be in contention
-        //mutex.lock();
+        mutex.lock();
         busWriter = cache_id;
         Port_BusWriter.write(busWriter);
-        locked = true;
-        Port_BusLocked.write(1);
+        //Port_BusLocked.write(1);
         Port_BusAddress.write(addr);
+        cout << addr <<endl;
         Port_BusFunction.write(FUNC_READ);
         wait(99);
-        locked = false;
-        Port_BusLocked.write(0);
-        //mutex.unlock();
+        //Port_BusLocked.write(0);
+        mutex.unlock();
         return true;
     }
     
-    virtual bool read_x(int addr, int cache_id)
+    virtual bool read_x(uint32_t addr, int cache_id)
     {
         // Bus might be in contention
-        //mutex.lock();
+        mutex.lock();
         busWriter = cache_id;
         Port_BusWriter.write(busWriter);
-        locked = true;
-        Port_BusLocked.write(1);
-        Port_BusAddress.write(addr);
+        //Port_BusLocked.write(1);
+        Port_BusAddress.write(addr);//bitset< 32 >( addr ).to_string());
+        //cout << addr <<endl;
         Port_BusFunction.write(FUNC_READ_X);
         wait(99);
-        locked = false;
-        Port_BusLocked.write(0);
-        //mutex.unlock();
+        //Port_BusLocked.write(0);
+        mutex.unlock();
         return true;
     }
     
-    virtual bool write(int addr, int data, int cache_id)
+    virtual bool write(uint32_t addr, int data, int cache_id)
     {
         // Handle contention if any
-        //mutex.lock(); //Mutex cant be imported
+        mutex.lock();
         busWriter = cache_id;
         Port_BusWriter.write(busWriter);
-        locked = true;
-        Port_BusLocked.write(1);
-        Port_BusAddress.write(addr);
+        
+        //Port_BusLocked.write(1);
+        Port_BusAddress.write(addr);//bitset< 32 >( addr ).to_string());
+        //cout << addr <<endl;
         Port_BusFunction.write(FUNC_WRITE);
         wait(99);
-        locked = false;
-        Port_BusLocked.write(0);
-        //mutex.unlock();
+        //Port_BusLocked.write(0);
+        mutex.unlock();
         // Data does not have to be handled in the simulation
         return true;
     }
@@ -352,7 +350,7 @@ private:
                 if (set_index == -1){           //if miss simulate a read from the memory
                     
                     
-                    if(cache_id == 0) // Mutex could not be used
+                    if(cache_id <= 4 || true) 
                         Port_Bus->read(addr,cache_id);
                     else
                         wait(99);
@@ -363,7 +361,7 @@ private:
                     valid[index][set_index] = true;
                 }
                 if(valid[index][set_index]==false){
-                    if(cache_id == 0) // Mutex could not be used
+                    if(cache_id == 0 || true) 
                         Port_Bus->read(addr,cache_id);
                     else
                         wait(99);
@@ -387,7 +385,7 @@ private:
                         Port_Hit.write(2);
                         set_index = get_lru(index);
                         tags[index][set_index]=tag;
-                        if(cache_id == 0) 
+                        if(cache_id == 0 || true) 
                             Port_Bus->write(addr,0,cache_id);
                         else
                             wait(99);   //simulate memory delay
@@ -398,7 +396,7 @@ private:
                         mru(index,set_index);
                         
                         if(valid[index][set_index]==false){  //hit but invalid
-                            if(cache_id == 0) // Mutex could not be used
+                            if(cache_id == 0 || true) // Mutex could not be used
                                 Port_Bus->read_x(addr,cache_id); // read entire cache line before write
                             else
                                 wait(99);
@@ -406,7 +404,7 @@ private:
                             
                         }
                         
-                        if(cache_id == 0) 
+                        if(cache_id == 0 || true) 
                             Port_Bus->write(addr,0,cache_id);
                         else
                             wait(99);
@@ -426,14 +424,27 @@ private:
     void snoop_bus(){
         Bus::Function Func = Port_BusFunction.read();
         int busWriter = Port_BusWriter.read();
-        uint32_t addr = Port_BusAddress.read().to_int();
-        
+		uint32_t addr = 0;
+        cout << Port_BusAddress.read().to_string() << endl;
+        //cout << Port_BusAddress.read().to_int()<<" as int" << endl;
+        auto address = Port_BusAddress.read();
+		if(address.to_string().find('X') != std::string::npos)
+		{
+            for(int i = 0 ; i<32;i++){
+                if(address[i] =='X')
+                    address[i]='1';
+            }
+		}
+        cout << address << " versuchte conversion"<< endl;
+        cout << address.to_int()<<" as int after conversion" << endl;
+        addr = address.to_int();
+
         if(busWriter == cache_id)
             return;
 
         
         uint32_t offset = (addr & 31);                   //first 5 bit are the offset
-        uint32_t tag = (addr >> 5);
+        uint32_t tag = (addr >> 5); 
         uint32_t index = (tag & 127);                    //next 7 bit are the index
 
         tag = (tag >> 7);   
@@ -534,17 +545,12 @@ private:
         Cache::Function  f;
         counter = 0;
 
-        /*for(int i = 0;i<20;i++){
-            Port_MemAddr.write(0x7FFFFFFF);
-            Port_MemFunc.write(Cache::FUNC_READ);
-            cout << sc_time_stamp() << ": CPU sends read" << endl;
-            wait(Port_MemDone.value_changed_event());
-            cout << sc_time_stamp() << ": CPU reads: " << Port_MemData.read() << endl;
-        }*/
+        
         // Loop until end of tracefile
-        while((!tracefile_ptr->eof()) && counter <=1100) //eof() caused infinity loop for dbg_p{2,4,8}.trf
+        while((!tracefile_ptr->eof()) && counter <=4400) //eof() caused infinity loop for dbg_p{2,4,8}.trf
         {
             counter ++;
+            cout << counter <<endl;
             //eof_tracefile(tracefile_ptr);
            
             // Get the next action for the processor in the trace
@@ -584,7 +590,6 @@ private:
 
                 default:
                     cerr << "Error, got invalid data from Trace" << endl;
-                    //exit(0);
                     break;
             }
 
@@ -665,17 +670,17 @@ int sc_main(int argc, char* argv[])
         stats_init();
 
         // Instantiate Modules
+	    Bus    bus("bus");
         Cache   cache[num_cpus];        
         CPU     cpu[num_cpus];
         
-        Bus    bus("bus");
+        
         
         //Bus
-        sc_signal_rv<32>                sigBusAddress;
-        sc_signal<Bus::Function>        sigBusFunction;
-        sc_signal<int>                  sigBusLocked;
-        sc_signal<int>                  sigBusWriter;
-        
+        sc_signal<Bus::Function, SC_MANY_WRITERS>        sigBusFunction;
+        sc_signal<int, SC_MANY_WRITERS>                  sigBusLocked;
+        sc_signal<int, SC_MANY_WRITERS>                  sigBusWriter;
+        sc_signal_rv<32>                				 sigBusAddress;
         // Signals
         sc_buffer<Cache::Function> sigMemFunc[num_cpus];
         sc_buffer<Cache::RetCode>  sigMemDone[num_cpus];
@@ -731,18 +736,20 @@ int sc_main(int argc, char* argv[])
         bus.Port_CLK(clk);
 
         cout << "Running (press CTRL+C to interrupt)... " << endl;
-
+        
         sc_trace_file* wf;
-        wf = sc_create_vcd_trace_file("task_1");
+        wf = sc_create_vcd_trace_file("task_2");
         int i = 0;
-        sc_trace(wf,sigMemFunc[i],"MemFunc");
-        sc_trace(wf,sigMemAddr[i],"MemAddr");
-        sc_trace(wf,sigMemData[i],"MemData");
-        sc_trace(wf,sigMemDone[i],"MemDone");
-        sc_trace(wf,sigCacheHit[i],"CacheHit");
-        sc_trace(wf,sigCacheLine[i],"CacheLine");
-        sc_trace(wf,sigCacheSet[i],"CacheSet");
-        sc_trace(wf,sigCacheTag[i],"CacheTag");
+        for( ;i<num_cpus;i++){
+        sc_trace(wf,sigMemFunc[i],to_string(i)+"MemFunc");
+        sc_trace(wf,sigMemAddr[i],to_string(i)+"MemAddr");
+        sc_trace(wf,sigMemData[i],to_string(i)+"MemData");
+        sc_trace(wf,sigMemDone[i],to_string(i)+"MemDone");
+        sc_trace(wf,sigCacheHit[i],to_string(i)+"CacheHit");
+        sc_trace(wf,sigCacheLine[i],to_string(i)+"CacheLine");
+        sc_trace(wf,sigCacheSet[i],to_string(i)+"CacheSet");
+        sc_trace(wf,sigCacheTag[i],to_string(i)+"CacheTag");
+        }
         sc_trace(wf,sigBusAddress,"BusAddress");
         sc_trace(wf,sigBusFunction,"BusFunction");
         sc_trace(wf,sigBusLocked,"BusLocked");
